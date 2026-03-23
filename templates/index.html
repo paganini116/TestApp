@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local Weather</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="container">
+      <button id="weather-button" type="button" class="weather-button">
+        Click here to see the weather where you are
+      </button>
+      <div id="status" class="status" aria-live="polite"></div>
+      <div id="weather-result" class="weather-result" hidden>
+        <p><strong>Location:</strong> <span id="location"></span></p>
+        <p><strong>Condition:</strong> <span id="summary"></span></p>
+        <p><strong>Temperature:</strong> <span id="temperature"></span></p>
+        <p><strong>Feels like:</strong> <span id="feels-like"></span></p>
+        <p><strong>Wind:</strong> <span id="wind"></span></p>
+        <p class="attribution">
+          Location data © OpenStreetMap contributors
+        </p>
+      </div>
+    </main>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
