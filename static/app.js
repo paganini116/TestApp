@@ -6,6 +6,7 @@ const summary = document.getElementById("summary");
 const temperature = document.getElementById("temperature");
 const feelsLike = document.getElementById("feels-like");
 const wind = document.getElementById("wind");
+const aiSummary = document.getElementById("ai-summary");
 
 const WEATHER_CODES = {
   0: "Clear sky",
@@ -103,7 +104,14 @@ function showWeather(data) {
   temperature.textContent = `${data.temperature_f} F`;
   feelsLike.textContent = `${data.feels_like_f} F`;
   wind.textContent = `${data.wind_mph} mph`;
+  aiSummary.hidden = true;
+  aiSummary.textContent = "";
   result.hidden = false;
+}
+
+function showAiSummary(text) {
+  aiSummary.textContent = text;
+  aiSummary.hidden = false;
 }
 
 async function fetchWeather(latitude, longitude) {
@@ -153,6 +161,24 @@ async function fetchWeatherFromOpenMeteo(latitude, longitude) {
     feels_like_f: current.apparent_temperature,
     wind_mph: current.wind_speed_10m,
   };
+}
+
+async function fetchAiSummary(weatherData) {
+  const response = await fetch("/api/weather-summary", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(weatherData),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Unable to generate an AI weather summary.");
+  }
+
+  return data.ai_summary;
 }
 
 function formatState(address) {
@@ -254,7 +280,15 @@ button.addEventListener("click", () => {
 
         data.location = location;
         showWeather(data);
-        setStatus("Weather loaded.");
+        setStatus("Weather loaded. Writing a quick summary...");
+
+        try {
+          const generatedSummary = await fetchAiSummary(data);
+          showAiSummary(generatedSummary);
+          setStatus("Weather loaded.");
+        } catch (_error) {
+          setStatus("Weather loaded.");
+        }
       } catch (error) {
         setStatus(error.message, true);
       }

@@ -52,3 +52,32 @@ def test_weather_returns_forecast(client):
 
     assert response.status_code == 200
     assert response.get_json() == mocked_weather
+
+
+def test_weather_summary_requires_weather_fields(client):
+    response = client.post("/api/weather-summary", json={"location": "San Francisco, CA"})
+
+    assert response.status_code == 400
+    assert (
+        response.get_json()["error"]
+        == "Weather summary, temperature, feels like, and wind are required."
+    )
+
+
+def test_weather_summary_returns_ai_text(client):
+    with patch("app.generate_weather_summary", return_value="It feels bright and easygoing in San Francisco, CA today."):
+        response = client.post(
+            "/api/weather-summary",
+            json={
+                "location": "San Francisco, CA",
+                "summary": "Clear sky",
+                "temperature_f": 72.3,
+                "feels_like_f": 73.0,
+                "wind_mph": 5.2,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "ai_summary": "It feels bright and easygoing in San Francisco, CA today."
+    }
