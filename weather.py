@@ -40,14 +40,50 @@ class WeatherServiceError(Exception):
     pass
 
 
+def _build_progression(payload, current_time):
+    hourly = payload.get("hourly") or {}
+    times = hourly.get("time") or []
+    temperatures = hourly.get("temperature_2m") or []
+    weather_codes = hourly.get("weather_code") or []
+    precipitation_probabilities = hourly.get("precipitation_probability") or []
+
+    if not times:
+        return []
+
+    try:
+        start_index = times.index(current_time)
+    except ValueError:
+        start_index = 0
+
+    progression = []
+    for index in range(start_index, min(start_index + 6, len(times))):
+        time_value = times[index]
+        progression.append(
+            {
+                "time": time_value[-5:],
+                "temperature_f": temperatures[index],
+                "summary": WEATHER_CODES.get(
+                    weather_codes[index],
+                    "Current conditions unavailable",
+                ),
+                "precipitation_probability": precipitation_probabilities[index],
+            }
+        )
+
+    return progression
+
+
 def fetch_current_weather(latitude, longitude):
     query = urlencode(
         {
             "latitude": latitude,
             "longitude": longitude,
             "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
+            "hourly": "temperature_2m,weather_code,precipitation_probability",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
+            "timezone": "auto",
         }
     )
     url = f"https://api.open-meteo.com/v1/forecast?{query}"
@@ -62,15 +98,23 @@ def fetch_current_weather(latitude, longitude):
         ) from exc
 
     current = payload.get("current")
+    daily = payload.get("daily") or {}
     if not current:
         raise WeatherServiceError("Weather data was unavailable for this location.")
 
     weather_code = current.get("weather_code")
     summary = WEATHER_CODES.get(weather_code, "Current conditions unavailable")
+    progression = _build_progression(payload, current.get("time"))
 
     return {
         "summary": summary,
         "temperature_f": current.get("temperature_2m"),
         "feels_like_f": current.get("apparent_temperature"),
         "wind_mph": current.get("wind_speed_10m"),
+        "high_f": (daily.get("temperature_2m_max") or [None])[0],
+        "low_f": (daily.get("temperature_2m_min") or [None])[0],
+        "precipitation_probability_max": (
+            daily.get("precipitation_probability_max") or [None]
+        )[0],
+        "progression": progression,
     }

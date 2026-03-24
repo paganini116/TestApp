@@ -42,6 +42,17 @@ def test_weather_returns_forecast(client):
         "temperature_f": 72.3,
         "feels_like_f": 73.0,
         "wind_mph": 5.2,
+        "high_f": 77.0,
+        "low_f": 56.0,
+        "precipitation_probability_max": 12,
+        "progression": [
+            {
+                "time": "13:00",
+                "temperature_f": 72.0,
+                "summary": "Clear sky",
+                "precipitation_probability": 0,
+            }
+        ],
     }
 
     with patch("app.fetch_current_weather", return_value=mocked_weather):
@@ -65,7 +76,13 @@ def test_weather_summary_requires_weather_fields(client):
 
 
 def test_weather_summary_returns_ai_text(client):
-    with patch("app.generate_weather_summary", return_value="It feels bright and easygoing in San Francisco, CA today."):
+    with patch(
+        "app.generate_weather_summary",
+        return_value=(
+            "It feels bright and easygoing in San Francisco, CA today, and "
+            "conditions should stay clear and comfortable into the afternoon."
+        ),
+    ):
         response = client.post(
             "/api/weather-summary",
             json={
@@ -74,10 +91,24 @@ def test_weather_summary_returns_ai_text(client):
                 "temperature_f": 72.3,
                 "feels_like_f": 73.0,
                 "wind_mph": 5.2,
+                "high_f": 77.0,
+                "low_f": 56.0,
+                "precipitation_probability_max": 12,
+                "progression": [
+                    {
+                        "time": "13:00",
+                        "temperature_f": 72.0,
+                        "summary": "Clear sky",
+                        "precipitation_probability": 0,
+                    }
+                ],
             },
         )
 
     assert response.status_code == 200
     assert response.get_json() == {
-        "ai_summary": "It feels bright and easygoing in San Francisco, CA today."
+        "ai_summary": (
+            "It feels bright and easygoing in San Francisco, CA today, and "
+            "conditions should stay clear and comfortable into the afternoon."
+        )
     }

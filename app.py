@@ -92,6 +92,10 @@ def create_app(test_config=None):
         temperature_f = payload.get("temperature_f")
         feels_like_f = payload.get("feels_like_f")
         wind_mph = payload.get("wind_mph")
+        high_f = payload.get("high_f")
+        low_f = payload.get("low_f")
+        precipitation_probability_max = payload.get("precipitation_probability_max")
+        progression = payload.get("progression", [])
 
         required_values = [summary, temperature_f, feels_like_f, wind_mph]
         if any(value is None for value in required_values):
@@ -107,6 +111,14 @@ def create_app(test_config=None):
                 temperature_f=float(temperature_f),
                 feels_like_f=float(feels_like_f),
                 wind_mph=float(wind_mph),
+                high_f=float(high_f) if high_f is not None else None,
+                low_f=float(low_f) if low_f is not None else None,
+                precipitation_probability_max=(
+                    float(precipitation_probability_max)
+                    if precipitation_probability_max is not None
+                    else None
+                ),
+                progression=progression,
             )
         except (TypeError, ValueError):
             return jsonify({"error": "Weather values must be valid numbers."}), 400

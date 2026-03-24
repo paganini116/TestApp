@@ -114,31 +114,16 @@ function showAiSummary(text) {
   aiSummary.hidden = false;
 }
 
-async function fetchWeather(latitude, longitude) {
-  const response = await fetch("/api/weather", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ latitude, longitude }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || "Unable to fetch weather.");
-  }
-
-  return data;
-}
-
 async function fetchWeatherFromOpenMeteo(latitude, longitude) {
   const params = new URLSearchParams({
     latitude,
     longitude,
     current: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
+    hourly: "temperature_2m,weather_code,precipitation_probability",
+    daily: "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
     temperature_unit: "fahrenheit",
     wind_speed_unit: "mph",
+    timezone: "auto",
   });
   const response = await fetch(
     `https://api.open-meteo.com/v1/forecast?${params.toString()}`,
@@ -155,11 +140,19 @@ async function fetchWeatherFromOpenMeteo(latitude, longitude) {
     throw new Error("Weather data was unavailable for this location.");
   }
 
+  const daily = payload.daily || {};
+  const progression = buildProgression(payload, current.time);
+
   return {
     summary: WEATHER_CODES[current.weather_code] || "Current conditions unavailable",
     temperature_f: current.temperature_2m,
     feels_like_f: current.apparent_temperature,
     wind_mph: current.wind_speed_10m,
+    high_f: daily.temperature_2m_max?.[0] ?? null,
+    low_f: daily.temperature_2m_min?.[0] ?? null,
+    precipitation_probability_max:
+      daily.precipitation_probability_max?.[0] ?? null,
+    progression,
   };
 }
 
@@ -179,6 +172,35 @@ async function fetchAiSummary(weatherData) {
   }
 
   return data.ai_summary;
+}
+
+function buildProgression(payload, currentTime) {
+  const hourly = payload.hourly || {};
+  const times = hourly.time || [];
+  const temperatures = hourly.temperature_2m || [];
+  const weatherCodes = hourly.weather_code || [];
+  const precipitationProbabilities = hourly.precipitation_probability || [];
+
+  if (!times.length) {
+    return [];
+  }
+
+  let startIndex = times.indexOf(currentTime);
+  if (startIndex === -1) {
+    startIndex = 0;
+  }
+
+  const progression = [];
+  for (let index = startIndex; index < Math.min(startIndex + 6, times.length); index += 1) {
+    progression.push({
+      time: times[index].slice(-5),
+      temperature_f: temperatures[index],
+      summary: WEATHER_CODES[weatherCodes[index]] || "Current conditions unavailable",
+      precipitation_probability: precipitationProbabilities[index],
+    });
+  }
+
+  return progression;
 }
 
 function formatState(address) {
@@ -257,17 +279,10 @@ button.addEventListener("click", () => {
         let data;
         let location;
 
-        try {
-          data = await fetchWeather(
-            position.coords.latitude,
-            position.coords.longitude,
-          );
-        } catch (error) {
-          data = await fetchWeatherFromOpenMeteo(
-            position.coords.latitude,
-            position.coords.longitude,
-          );
-        }
+        data = await fetchWeatherFromOpenMeteo(
+          position.coords.latitude,
+          position.coords.longitude,
+        );
 
         try {
           location = await fetchLocationName(
