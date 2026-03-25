@@ -1,7 +1,9 @@
 import os
+import uuid
 
 from flask import Flask, jsonify, render_template, request
 
+from logging_utils import configure_logging
 from openai_client import OpenAIServiceError, generate_weather_summary
 
 
@@ -24,6 +26,7 @@ def create_app(test_config=None):
     app = Flask(__name__)
     load_env_file(app.root_path)
     app.config.from_mapping(TESTING=False)
+    logger = configure_logging()
 
     if test_config is not None:
         app.config.update(test_config)
@@ -35,6 +38,7 @@ def create_app(test_config=None):
     @app.route("/api/weather-summary", methods=["POST"])
     def weather_summary():
         payload = request.get_json(silent=True) or {}
+        request_id = str(uuid.uuid4())
         location = payload.get("location", "your area")
         summary = payload.get("summary")
         temperature_f = payload.get("temperature_f")
@@ -44,9 +48,21 @@ def create_app(test_config=None):
         low_f = payload.get("low_f")
         precipitation_probability_max = payload.get("precipitation_probability_max")
         progression = payload.get("progression", [])
+        base_log = {
+            "request_id": request_id,
+            "route": "/api/weather-summary",
+            "location": location,
+            "progression_count": len(progression),
+        }
+
+        logger.info("weather_summary_request_started", extra=base_log)
 
         required_values = [summary, temperature_f, feels_like_f, wind_mph]
         if any(value is None for value in required_values):
+            logger.warning(
+                "weather_summary_validation_failed",
+                extra=base_log,
+            )
             return (
                 jsonify({"error": "Weather summary, temperature, feels like, and wind are required."}),
                 400,
@@ -54,6 +70,7 @@ def create_app(test_config=None):
 
         try:
             ai_summary = generate_weather_summary(
+                request_id=request_id,
                 location=location,
                 summary=summary,
                 temperature_f=float(temperature_f),
@@ -69,9 +86,25 @@ def create_app(test_config=None):
                 progression=progression,
             )
         except (TypeError, ValueError):
+            logger.warning(
+                "weather_summary_invalid_numeric_values",
+                extra=base_log,
+            )
             return jsonify({"error": "Weather values must be valid numbers."}), 400
         except OpenAIServiceError as exc:
+            logger.error(
+                "weather_summary_generation_failed",
+                extra={
+                    **base_log,
+                    "exception_type": type(exc).__name__,
+                },
+            )
             return jsonify({"error": str(exc)}), 502
+
+        logger.info(
+            "weather_summary_generated",
+            extra=base_log,
+        )
 
         return jsonify({"ai_summary": ai_summary})
 

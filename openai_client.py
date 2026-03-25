@@ -6,6 +6,8 @@ from urllib.request import Request, urlopen
 
 import certifi
 
+from logging_utils import configure_logging
+
 
 class OpenAIServiceError(Exception):
     pass
@@ -24,6 +26,7 @@ def _extract_output_text(payload):
 
 
 def generate_weather_summary(
+    request_id,
     location,
     summary,
     temperature_f,
@@ -34,8 +37,24 @@ def generate_weather_summary(
     precipitation_probability_max=None,
     progression=None,
 ):
+    logger = configure_logging()
+    log_context = {
+        "request_id": request_id,
+        "location": location,
+        "progression_count": len(progression or []),
+        "temperature_f": temperature_f,
+        "feels_like_f": feels_like_f,
+        "wind_mph": wind_mph,
+        "high_f": high_f,
+        "low_f": low_f,
+        "precipitation_probability_max": precipitation_probability_max,
+    }
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
+        logger.error(
+            "openai_api_key_missing",
+            extra=log_context,
+        )
         raise OpenAIServiceError("OpenAI API key is missing.")
 
     progression_lines = []
@@ -82,15 +101,44 @@ def generate_weather_summary(
         method="POST",
     )
     ssl_context = ssl.create_default_context(cafile=certifi.where())
+    logger.info(
+        "openai_weather_summary_request_started",
+        extra=log_context,
+    )
 
     try:
         with urlopen(request, timeout=20, context=ssl_context) as response:
             payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except HTTPError as exc:
+        logger.error(
+            "openai_weather_summary_request_failed",
+            extra={
+                **log_context,
+                "exception_type": type(exc).__name__,
+                "status_code": exc.code,
+            },
+        )
+        raise OpenAIServiceError("Unable to generate an AI weather summary right now.") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        logger.error(
+            "openai_weather_summary_request_failed",
+            extra={
+                **log_context,
+                "exception_type": type(exc).__name__,
+            },
+        )
         raise OpenAIServiceError("Unable to generate an AI weather summary right now.") from exc
 
     output_text = _extract_output_text(payload)
     if not output_text:
+        logger.error(
+            "openai_weather_summary_empty_response",
+            extra=log_context,
+        )
         raise OpenAIServiceError("OpenAI returned an empty weather summary.")
 
+    logger.info(
+        "openai_weather_summary_request_completed",
+        extra=log_context,
+    )
     return output_text
