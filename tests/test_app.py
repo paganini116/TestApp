@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import logging
 import json
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -80,7 +80,7 @@ def test_weather_summary_returns_ai_text(client):
 def test_weather_summary_returns_502_on_openai_failure(client):
     with patch(
         "app.generate_weather_summary",
-        side_effect=OpenAIServiceError("Unable to generate an AI weather summary right now."),
+        side_effect=OpenAIServiceError("OpenAI took too long to respond. Please try again."),
     ):
         response = client.post(
             "/api/weather-summary",
@@ -95,7 +95,7 @@ def test_weather_summary_returns_502_on_openai_failure(client):
 
     assert response.status_code == 502
     assert response.get_json() == {
-        "error": "Unable to generate an AI weather summary right now."
+        "error": "OpenAI took too long to respond. Please try again."
     }
 
 
@@ -182,3 +182,307 @@ def test_openai_failure_logs_sanitized_metadata(capsys):
     assert error_log["status_code"] == 401
     assert error_log["exception_type"] == "HTTPError"
     assert "sk-test-secret" not in raw_output
+
+
+def test_openai_client_maps_auth_failure_message():
+    with patch("openai_client.urlopen") as mocked_urlopen:
+        mocked_urlopen.side_effect = HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError) as exc_info:
+                generate_weather_summary(
+                    request_id="req-auth",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert str(exc_info.value) == (
+        "The server could not authenticate with OpenAI. Check the API key configuration."
+    )
+
+
+def test_openai_client_maps_rate_limit_failure_message():
+    with patch("openai_client.urlopen") as mocked_urlopen:
+        mocked_urlopen.side_effect = HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
+            fp=None,
+        )
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError) as exc_info:
+                generate_weather_summary(
+                    request_id="req-rate",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert str(exc_info.value) == (
+        "OpenAI rate limits were reached. Please try again in a moment."
+    )
+
+
+def test_openai_client_retries_once_on_rate_limit_then_succeeds():
+    with patch("openai_client.urlopen") as mocked_urlopen, patch("openai_client.time.sleep") as mocked_sleep:
+        success_response = mocked_urlopen.return_value.__enter__.return_value
+        mocked_urlopen.side_effect = [
+            HTTPError(
+                url="https://api.openai.com/v1/responses",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=None,
+            ),
+            success_response,
+        ]
+
+        with patch("openai_client.json.load", return_value={
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "A clear and comfortable day continues into the afternoon.",
+                        }
+                    ],
+                }
+            ]
+        }):
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+                result = generate_weather_summary(
+                    request_id="req-retry-429",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert result == "A clear and comfortable day continues into the afternoon."
+    assert mocked_urlopen.call_count == 2
+    mocked_sleep.assert_called_once()
+
+
+def test_openai_client_maps_server_error_message():
+    with patch("openai_client.urlopen") as mocked_urlopen:
+        mocked_urlopen.side_effect = HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=None,
+            fp=None,
+        )
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError) as exc_info:
+                generate_weather_summary(
+                    request_id="req-server",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert str(exc_info.value) == (
+        "OpenAI is temporarily unavailable. Please try again shortly."
+    )
+
+
+def test_openai_client_retries_once_on_server_error_then_succeeds():
+    with patch("openai_client.urlopen") as mocked_urlopen, patch("openai_client.time.sleep") as mocked_sleep:
+        success_response = mocked_urlopen.return_value.__enter__.return_value
+        mocked_urlopen.side_effect = [
+            HTTPError(
+                url="https://api.openai.com/v1/responses",
+                code=503,
+                msg="Service Unavailable",
+                hdrs=None,
+                fp=None,
+            ),
+            success_response,
+        ]
+
+        with patch("openai_client.json.load", return_value={
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "A calm, mild afternoon is expected.",
+                        }
+                    ],
+                }
+            ]
+        }):
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+                result = generate_weather_summary(
+                    request_id="req-retry-503",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert result == "A calm, mild afternoon is expected."
+    assert mocked_urlopen.call_count == 2
+    mocked_sleep.assert_called_once()
+
+
+def test_openai_client_maps_timeout_message():
+    with patch("openai_client.urlopen", side_effect=TimeoutError):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError) as exc_info:
+                generate_weather_summary(
+                    request_id="req-timeout",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert str(exc_info.value) == "OpenAI took too long to respond. Please try again."
+
+
+def test_openai_client_retries_once_on_timeout_then_succeeds():
+    with patch("openai_client.urlopen") as mocked_urlopen, patch("openai_client.time.sleep") as mocked_sleep:
+        success_response = mocked_urlopen.return_value.__enter__.return_value
+        mocked_urlopen.side_effect = [TimeoutError(), success_response]
+
+        with patch("openai_client.json.load", return_value={
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "The weather should stay bright through the day.",
+                        }
+                    ],
+                }
+            ]
+        }):
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+                result = generate_weather_summary(
+                    request_id="req-retry-timeout",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert result == "The weather should stay bright through the day."
+    assert mocked_urlopen.call_count == 2
+    mocked_sleep.assert_called_once()
+
+
+def test_openai_client_maps_network_message():
+    with patch("openai_client.urlopen", side_effect=URLError("dns failure")):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError) as exc_info:
+                generate_weather_summary(
+                    request_id="req-network",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert str(exc_info.value) == (
+        "The server could not reach OpenAI. Check network connectivity and try again."
+    )
+
+
+def test_openai_client_does_not_retry_auth_failure():
+    with patch("openai_client.urlopen") as mocked_urlopen, patch("openai_client.time.sleep") as mocked_sleep:
+        mocked_urlopen.side_effect = HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+            with pytest.raises(OpenAIServiceError):
+                generate_weather_summary(
+                    request_id="req-no-retry-auth",
+                    location="San Francisco, CA",
+                    summary="Clear sky",
+                    temperature_f=72.3,
+                    feels_like_f=73.0,
+                    wind_mph=5.2,
+                    progression=[],
+                )
+
+    assert mocked_urlopen.call_count == 1
+    mocked_sleep.assert_not_called()
+
+
+def test_openai_client_does_not_retry_invalid_response():
+    with patch("openai_client.urlopen") as mocked_urlopen, patch("openai_client.time.sleep") as mocked_sleep:
+        mocked_response = mocked_urlopen.return_value.__enter__.return_value
+        mocked_response.read.return_value = b""
+        with patch("openai_client.json.load", side_effect=json.JSONDecodeError("bad", "", 0)):
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+                with pytest.raises(OpenAIServiceError):
+                    generate_weather_summary(
+                        request_id="req-no-retry-invalid",
+                        location="San Francisco, CA",
+                        summary="Clear sky",
+                        temperature_f=72.3,
+                        feels_like_f=73.0,
+                        wind_mph=5.2,
+                        progression=[],
+                    )
+
+    assert mocked_urlopen.call_count == 1
+    mocked_sleep.assert_not_called()
+
+
+def test_openai_client_maps_invalid_response_message():
+    with patch("openai_client.urlopen") as mocked_urlopen:
+        mocked_response = mocked_urlopen.return_value.__enter__.return_value
+        mocked_response.read.return_value = b""
+        with patch("openai_client.json.load", side_effect=json.JSONDecodeError("bad", "", 0)):
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=False):
+                with pytest.raises(OpenAIServiceError) as exc_info:
+                    generate_weather_summary(
+                        request_id="req-invalid",
+                        location="San Francisco, CA",
+                        summary="Clear sky",
+                        temperature_f=72.3,
+                        feels_like_f=73.0,
+                        wind_mph=5.2,
+                        progression=[],
+                    )
+
+    assert str(exc_info.value) == "OpenAI returned an invalid or empty summary response."
