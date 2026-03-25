@@ -1,21 +1,21 @@
 # Local Weather Flask App
 
 This project is a minimal Flask web app that asks the user for browser
-location access and shows current local weather from Open-Meteo.
+location access, fetches weather directly in the browser from Open-Meteo,
+and uses OpenAI to generate a short weather summary.
 
 ## Goals
 
 - Keep the stack minimal and easy to understand.
-- Use Flask, SQLite, and plain JavaScript.
+- Use Flask and plain JavaScript with minimal backend surface area.
 - Optimize for speed of setup over extra features.
 
 ## Project Structure
 
 - `app.py`: Flask app entry point and routes.
-- `db.py`: Minimal SQLite connection and initialization helpers.
-- `weather.py`: Open-Meteo integration and weather formatting.
+- `openai_client.py`: OpenAI Responses API integration for summary text.
 - `templates/index.html`: Single-page UI with one button.
-- `static/app.js`: Browser geolocation and fetch logic.
+- `static/app.js`: Browser geolocation, Open-Meteo fetch, and summary logic.
 - `static/styles.css`: Minimal styling.
 - `tests/test_app.py`: Basic route and API coverage.
 - `AGENTS.md`: Repository-specific working instructions.
@@ -24,9 +24,9 @@ location access and shows current local weather from Open-Meteo.
 
 1. Scaffold the Flask app and single-page UI.
 2. Add browser geolocation permission flow with one button.
-3. Connect the Flask backend to Open-Meteo.
-4. Add minimal SQLite scaffolding for request history.
-5. Add tests for the page and weather endpoint.
+3. Fetch weather directly from Open-Meteo in the browser.
+4. Add OpenAI-generated weather summaries.
+5. Add tests for the page and summary endpoint.
 6. Document setup, run steps, and future improvements.
 
 ## Setup
@@ -44,7 +44,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-The app reads `.env` directly and uses `WEATHER_DB_PATH` for the SQLite file.
+The app reads `.env` directly for the OpenAI API key used by the summary route.
 
 ## Run the App
 
@@ -52,7 +52,7 @@ The app reads `.env` directly and uses `WEATHER_DB_PATH` for the SQLite file.
 flask --app app --debug run
 ```
 
-Then open the local Flask URL in your browser and click `Get My Weather`.
+Then open the local Flask URL in your browser and click the main button.
 
 ## Run Tests
 
@@ -62,7 +62,6 @@ pytest tests/
 
 ## Future Improvements
 
-- Persist and display recent weather lookups from SQLite.
 - Add reverse geocoding to show the city name.
 - Add better loading and error states.
 - Add deployment instructions.
