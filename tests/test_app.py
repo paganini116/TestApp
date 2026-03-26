@@ -38,6 +38,37 @@ def test_weather_summary_requires_weather_fields(client):
     )
 
 
+def test_weather_summary_rejects_invalid_numeric_values(client):
+    response = client.post(
+        "/api/weather-summary",
+        json={
+            "location": "San Francisco, CA",
+            "summary": "Clear sky",
+            "temperature_f": "not-a-number",
+            "feels_like_f": 73.0,
+            "wind_mph": 5.2,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Weather values must be valid numbers."
+    }
+
+
+def test_weather_summary_rejects_non_json_request_body(client):
+    response = client.post(
+        "/api/weather-summary",
+        data="not-json",
+        content_type="text/plain",
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Weather summary, temperature, feels like, and wind are required."
+    }
+
+
 def test_weather_summary_returns_ai_text(client):
     with patch(
         "app.generate_weather_summary",
@@ -182,6 +213,22 @@ def test_openai_failure_logs_sanitized_metadata(capsys):
     assert error_log["status_code"] == 401
     assert error_log["exception_type"] == "HTTPError"
     assert "sk-test-secret" not in raw_output
+
+
+def test_openai_client_missing_api_key_is_descriptive():
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(OpenAIServiceError) as exc_info:
+            generate_weather_summary(
+                request_id="req-missing-key",
+                location="San Francisco, CA",
+                summary="Clear sky",
+                temperature_f=72.3,
+                feels_like_f=73.0,
+                wind_mph=5.2,
+                progression=[],
+            )
+
+    assert str(exc_info.value) == "OpenAI API key is not configured on the server."
 
 
 def test_openai_client_maps_auth_failure_message():
